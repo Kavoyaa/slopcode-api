@@ -1,45 +1,39 @@
-from flask import Flask, request, jsonify
-from flask_cors import CORS
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import google.generativeai as genai
 from dotenv import load_dotenv
 import os
 import json
 
-# Load environment variables
+# Load .env file
 load_dotenv(".env")
 
-# Configure Gemini model
+# Configure Gemini
 genai.configure(api_key=os.getenv("API_KEY"))
 model = genai.GenerativeModel("models/gemini-2.5-pro")
 
-app = Flask(__name__)
+# Create FastAPI app
+app = FastAPI()
 
-# Enable CORS globally (all routes, all origins)
-CORS(app, resources={r"/*": {"origins": "*"}})
+# Allow all origins (adjust if needed)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or ["http://localhost:3000", "http://127.0.0.1:5500"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Add CORS headers manually to survive Vercel proxy stripping
-@app.after_request
-def add_cors_headers(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    return response
+# Request body model
+class GenRequest(BaseModel):
+    problem: str
+    code: str
 
 
-@app.route("/gen", methods=["POST", "OPTIONS"])
-def ai_response():
-    # Handle preflight OPTIONS request
-    if request.method == "OPTIONS":
-        return jsonify({"status": "ok"}), 200
-
+@app.post("/gen")
+async def generate_rating(req: GenRequest):
     print("✅ Received a request from frontend")
-
-    data = request.get_json()
-    problem = data.get("problem")
-    code = data.get("code")
-
-    if not problem or not code:
-        return jsonify({"error": "Missing 'problem' or 'code'"}), 400
 
     prompt = f"""
     You are an AI that powers a website called SlopCode. The website is like LeetCode but the purpose is to write the worst possible code while still being functional.
@@ -48,13 +42,13 @@ def ai_response():
     Slop rating will be higher the more inefficient and creatively bad the code is.
 
     Here is the problem:
-    {problem}
+    {req.problem}
 
     And here is the solution. Check if it's correct. If it's incorrect, then give it a slop rating of 0.
-    {code}
+    {req.code}
 
-    Generate the output as JSON in the following format: 
-    {{ 
+    Generate the output as JSON in the following format:
+    {{
         "rating": slop_rating
     }}
     
@@ -64,16 +58,13 @@ def ai_response():
     try:
         response = model.generate_content(prompt)
         parsed = json.loads(response.text)
-        return jsonify(parsed)
+        return parsed
     except Exception as e:
-        print("error")
-        return jsonify({"error": str(e)}), 500
+        print("❌ Error parsing response:", e)
+        return {"error": str(e)}
 
 
-# Required for Vercel deployment
-def handler(request, *args, **kwargs):
-    return app(request.environ, start_response=None)
-
-
+# For local testing
 if __name__ == "__main__":
-    app.run(debug=True)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5000)
